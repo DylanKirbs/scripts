@@ -14,6 +14,7 @@ IGNORE_FILES=(".$SCRIPT_NAME-ignore")
 DRY_RUN=false
 VERBOSE=false
 DOTFILES_ONLY=true
+MIGRATE=false
 FORCE=false
 BACKUP=false
 SOURCE_DIR=""
@@ -23,7 +24,7 @@ IGNORES=()
 # --- Help --- #
 show_help() {
 cat <<EOF
-Usage: $SCRIPT_NAME [OPTIONS] <source>
+Usage: $SCRIPT_NAME [OPTIONS] <directory>
 
 Options:
   -h, --help               Show this help message and exit
@@ -33,15 +34,15 @@ Options:
   --ignore <pattern>       Glob pattern to ignore (repeatable)
   --allow-non-dotfiles     Include non-dotfiles in symlinks
   --target <dir>           Target directory for links (default: \$HOME)
+  --migrate                Migrate existing files to source before linking
   --force                  Overwrite conflicts in target
   --backup                 Backup conflicts instead of overwriting
 
 Positional Arguments:
-  <source>                 Source directory containing files to stow
+  <directory>              Source directory containing files to stow
 
 Example:
-  $SCRIPT_NAME --ignore .git* ~/nfs-home
-  # This will create symlinks in \$HOME for all dotfiles in ~/nfs-home, ignoring .git* files/directories.
+  $SCRIPT_NAME --ignore .git ~/nfs-home
 
 Description:
 This utility creates symbolic links in the target (defaults to \$HOME) directory for all dotfiles (e.g., .vimrc) and configuration directories (e.g., .config) found in the specified source directory. It also supports ignore patterns, either specified via the command line or defined in ignore files (e.g., .$0-ignore) located in the source or target directories. Additionally, certain directories are automatically created in the source directory before the script runs, such as .config, .vscode, and .local/share, this caters for the use case of nsf-mounting.
@@ -68,6 +69,7 @@ parse_args() {
             --version) show_version; exit 0 ;;
             -n|--dry-run) DRY_RUN=true ;;
             -v|--verbose) VERBOSE=true ;;
+            --migrate) MIGRATE=true ;;
             --force) FORCE=true ;;
             --backup) BACKUP=true ;;
             --allow-non-dotfiles) DOTFILES_ONLY=false ;;
@@ -118,6 +120,41 @@ bootstrap_source() {
         [[ -e "$SOURCE_DIR/$f" ]] && continue
         echo "[+] touch $SOURCE_DIR/$f"
         $DRY_RUN || touch "$SOURCE_DIR/$f"
+    done
+}
+
+# --- Migrate Files --- #
+migrate_files() {
+    echo "Migrating files from $TARGET_DIR to $SOURCE_DIR"
+    find "$TARGET_DIR" -mindepth 1 -maxdepth 1 -type f | while read -r file; do
+        base="$(basename "$file")"
+        [[ "$DOTFILES_ONLY" == true && "$base" != .* ]] && continue
+
+        # Ignore pattern match
+        for pattern in "${IGNORES[@]}"; do
+            [[ "$base" == $pattern ]] && continue 2
+        done
+
+        src="$SOURCE_DIR/$base"
+        dst="$TARGET_DIR/$base"
+
+        [[ -L "$dst" && "$(realpath "$dst")" == "$(realpath "$src")" ]] && {
+            $VERBOSE && echo "[=] Skipping already-linked: $base"
+            continue
+        }
+
+        if [[ -e "$src" ]]; then
+            $VERBOSE && echo "[!] Skipping: $base already exists in source"
+            continue
+        fi
+
+        echo "[>] rsync $dst → $src"
+        $DRY_RUN || {
+            rsync -rt --no-g --no-o --chmod=ugo=rwX "$dst" "$src" && rm -f "$dst" || {
+                echo "Error migrating $dst to $src" >&2
+                continue
+            }
+        }
     done
 }
 
@@ -214,6 +251,7 @@ create_symlinks() {
 main() {
     parse_args "$@"
     bootstrap_source
+    $MIGRATE && migrate_files
     collect_symlinks
     create_symlinks
 }
