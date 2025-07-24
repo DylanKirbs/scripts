@@ -2,7 +2,7 @@
 # A script to emulate GNU Stow functionality
 
 SCRIPT_NAME="$(basename "$0")"
-VERSION="0.0.1"
+VERSION="0.0.2"
 
 USAGE="Usage: $SCRIPT_NAME [OPTIONS] <directory>
 Options:
@@ -27,7 +27,7 @@ This utility creates symbolic links in the target (defaults to \$HOME) directory
 
 AUTO_CREATE_DIRS=(".config" ".vscode" ".local")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf")
-DEFAULT_IGNORES=(".git" "node_modules" ".DS_Store")
+DEFAULT_IGNORES=(".git" "node_modules" ".DS_Store" ".Xauthority" ".Xsession*" ".cache" ".local/share/Trash" ".swp" ".swo" ".*.swp" ".*.swo")
 IGNORE_FILES=("$SCRIPT_NAME-ignore")
 IGNORES=()
 DRY_RUN=false
@@ -109,6 +109,11 @@ if ! [[ -d "$SOURCE_DIR" ]]; then
     exit 1
 fi
 
+if ! [[ -d "$TARGET_DIR" ]]; then
+    echo "Error: Target directory '$TARGET_DIR' does not exist or is not a directory."
+    exit 1
+fi
+
 # --- Combine ignores --- #
 IGNORES+=("${DEFAULT_IGNORES[@]}")
 
@@ -183,15 +188,16 @@ if $MIGRATE; then
 fi
 
 # --- Collect files to symlink --- #
-echo "Collecting top-level files from: $SOURCE_DIR"
+echo "Collecting top-level files & directories from: $SOURCE_DIR"
 FILES_TO_SYMLINK=()
 
 shopt -s dotglob nullglob
 for file in "$SOURCE_DIR"/* "$SOURCE_DIR"/.*; do
-    [[ -f "$file" ]] || continue
+    [[ -e "$file" ]] || continue
     filename="$(basename "$file")"
 
     if $DOTFILES_ONLY && [[ "$filename" != .* ]]; then
+        echo "[!] Skipping non-dotfile: $filename"
         continue
     fi
 
