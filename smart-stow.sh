@@ -126,36 +126,29 @@ bootstrap_source() {
 # --- Migrate Files --- #
 migrate_files() {
     echo "Migrating files from $TARGET_DIR to $SOURCE_DIR"
-    find "$TARGET_DIR" -mindepth 1 -maxdepth 1 -type f | while read -r file; do
-        base="$(basename "$file")"
-        [[ "$DOTFILES_ONLY" == true && "$base" != .* ]] && continue
 
-        # Ignore pattern match
-        for pattern in "${IGNORES[@]}"; do
-            [[ "$base" == $pattern ]] && continue 2
-        done
+    RSYNC_FLAGS=(
+    -rt
+    --remove-source-files
+    --prune-empty-dirs
+    --chmod=ugo=rwX
+    --ignore-existing
+    --include='*/'
+    )
 
-        src="$SOURCE_DIR/$base"
-        dst="$TARGET_DIR/$base"
+    [[ "$DOTFILES_ONLY" == true ]] && RSYNC_FLAGS+=(--include='.*' --exclude='*')
+    [[ "$DOTFILES_ONLY" != true ]] && RSYNC_FLAGS+=(--include='*')
 
-        [[ -L "$dst" && "$(realpath "$dst")" == "$(realpath "$src")" ]] && {
-            $VERBOSE && echo "[=] Skipping already-linked: $base"
-            continue
-        }
-
-        if [[ -e "$src" ]]; then
-            $VERBOSE && echo "[!] Skipping: $base already exists in source"
-            continue
-        fi
-
-        echo "[>] rsync $dst → $src"
-        $DRY_RUN || {
-            rsync -rt --no-g --no-o --chmod=ugo=rwX "$dst" "$src" && rm -f "$dst" || {
-                echo "Error migrating $dst to $src" >&2
-                continue
-            }
-        }
+    for pattern in "${IGNORES[@]}"; do
+        RSYNC_FLAGS+=(--exclude="$pattern")
     done
+
+    $DRY_RUN && RSYNC_FLAGS+=(--dry-run)
+    $VERBOSE && RSYNC_FLAGS+=(--verbose)
+    $VERBOSE && echo "[V] Rsync flags: ${RSYNC_FLAGS[*]}"
+
+    rsync "${RSYNC_FLAGS[@]}" "$TARGET_DIR"/ "$SOURCE_DIR"/
+
 }
 
 # --- Collect Files --- #
