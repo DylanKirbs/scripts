@@ -2,7 +2,7 @@
 # A script to emulate GNU Stow functionality
 
 SCRIPT_NAME="$(basename "$0")"
-VERSION="0.0.2"
+VERSION="0.0.3"
 
 USAGE="Usage: $SCRIPT_NAME [OPTIONS] <directory>
 Options:
@@ -22,12 +22,12 @@ Example:
   $SCRIPT_NAME ~/nfs-home
 
 Description:
-This utility creates symbolic links in the target (defaults to \$HOME) directory for all dotfiles (e.g., .vimrc) and configuration directories (e.g., .config or .vscode) found in the specified source directory. It also supports ignore patterns, either specified via the command line or defined in ignore files (e.g., .$0-ignore) located in the source or target directories. Additionally, certain directories are automatically created in the source directory before the script runs, such as .config, .vscode, and .local/share, this caters for the use case of nsf-mounting.
+This utility creates symbolic links in the target (defaults to \$HOME) directory for all dotfiles (e.g., .vimrc) and configuration directories (e.g., .config) found in the specified source directory. It also supports ignore patterns, either specified via the command line or defined in ignore files (e.g., .$0-ignore) located in the source or target directories. Additionally, certain directories are automatically created in the source directory before the script runs, such as .config, .vscode, and .local/share, this caters for the use case of nsf-mounting.
 "
 
-AUTO_CREATE_DIRS=(".config" ".vscode" ".local")
+AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf")
-DEFAULT_IGNORES=(".git" "node_modules" ".DS_Store" ".Xauthority" ".Xsession*" ".cache" ".local/share/Trash" ".swp" ".swo" ".*.swp" ".*.swo")
+DEFAULT_IGNORES=(".git" ".Xauthority" ".Xsession*" ".cache" ".local/share/Trash" ".swp" ".swo" ".*.swp" ".*.swo")
 IGNORE_FILES=("$SCRIPT_NAME-ignore")
 IGNORES=()
 DRY_RUN=false
