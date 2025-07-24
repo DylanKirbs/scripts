@@ -250,7 +250,7 @@ for file in "${FILES_TO_SYMLINK[@]}"; do
 done
 
 echo ""
-echo "Summary:"
+echo "Summary$(if $DRY_RUN; then echo ' (Dry Run)'; else echo ''; fi):"
 if $MIGRATE; then
     echo "  Migrated files:           $migrated_count"
     echo "  Skipped during migration: $migrated_skipped"
@@ -259,4 +259,4 @@ echo "  Symlinks created:         $linked"
 echo "  Already linked correctly: $already_linked"
 echo "  Skipped (file exists):    $skipped_existing"
 echo "  Skipped (broken/wrong):   $broken_or_incorrect"
-echo "  Dry run:                  $(if $DRY_RUN; then echo 'yes'; else echo 'no'; fi)"
+
