@@ -9,7 +9,7 @@ VERSION="0.1.2"
 # --- Configurable Defaults --- #
 AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf") 
-DEFAULT_IGNORES=(".git" ".Xauthority" ".config/gnome*" ".config/GNOME*" ".config/ubuntu*" ".config/xdg*" ".config/gtk*" ".config/dconf" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
+DEFAULT_IGNORES=(".git" ".Xauthority" ".config/gnome*" ".config/GNOME*" ".config/user*" ".config/ubuntu*" ".config/xdg*" ".config/gtk*" ".config/dconf" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
 IGNORE_FILES=(".$SCRIPT_NAME-ignore")
 SECOND_LEVEL_DIRS=(".config")
 
@@ -147,8 +147,9 @@ collect_symlinks() {
                 [[ -e "$sub" ]] || continue
                 subbase="$(basename "$sub")"
 
+                rel_path="${f#$SOURCE_DIR/}/$subbase"
                 for pattern in "${IGNORES[@]}"; do
-                    [[ "$subbase" == $pattern ]] && continue 2
+                  [[ "$subbase" == $pattern || "$rel_path" == $pattern ]] && continue 2
                 done
 
                 all_files+=("$sub")
