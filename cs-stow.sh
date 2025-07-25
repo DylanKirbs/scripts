@@ -4,7 +4,7 @@
 # set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
-VERSION="0.1.2"
+VERSION="0.1.3"
 
 # --- Configurable Defaults --- #
 AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
