@@ -11,6 +11,7 @@ AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf") 
 DEFAULT_IGNORES=(".git" ".Xauthority" ".config/gnome*" ".config/gtk*" ".config/dconf" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
 IGNORE_FILES=(".$SCRIPT_NAME-ignore")
+SECOND_LEVEL_DIRS=(".config")
 
 # --- Runtime Flags --- #
 DRY_RUN=false
