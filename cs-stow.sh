@@ -140,11 +140,11 @@ collect_symlinks() {
             [[ "$base" == $pattern ]] && continue 2
         done
 
-        # If it's a directory, descend and collect second-level entries
-        if [[ -d "$f" ]]; then
+        # If base is in SECOND_LEVEL_DIRS, descend and collect second-level entries
+        if [[ -d "$f" && " ${SECOND_LEVEL_DIRS[*]} " =~ " $base " ]]; then
             for sub in "$f"/*; do
-                subbase="$(basename "$sub")"
                 [[ -e "$sub" ]] || continue
+                subbase="$(basename "$sub")"
 
                 for pattern in "${IGNORES[@]}"; do
                     [[ "$subbase" == $pattern ]] && continue 2
@@ -162,9 +162,9 @@ collect_symlinks() {
     declare -A seen
     FILES_TO_SYMLINK=()
     for file in "${all_files[@]}"; do
-        base="$(basename "$file")"
-        [[ -z "${seen[$base]}" ]] && {
-            seen["$base"]=1
+        rel_path="${file#$SOURCE_DIR/}"
+        [[ -z "${seen[$rel_path]}" ]] && {
+            seen["$rel_path"]=1
             FILES_TO_SYMLINK+=("$file")
         }
     done
