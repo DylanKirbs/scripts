@@ -9,7 +9,7 @@ VERSION="0.1.2"
 # --- Configurable Defaults --- #
 AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf") 
-DEFAULT_IGNORES=(".git" ".Xauthority" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
+DEFAULT_IGNORES=(".git" ".Xauthority" ".config/gnome*" ".config/gtk*" ".config/dconf" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
 IGNORE_FILES=(".$SCRIPT_NAME-ignore")
 
 # --- Runtime Flags --- #
@@ -133,6 +133,7 @@ collect_symlinks() {
     for f in "$SOURCE_DIR"/* "$SOURCE_DIR"/.*; do
         [[ -e "$f" ]] || continue
         base="$(basename "$f")"
+        $VERBOSE && echo "[V] base = $base"
 
         [[ "$DOTFILES_ONLY" == true && "$base" != .* ]] && continue
 
