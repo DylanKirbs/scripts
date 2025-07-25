@@ -125,15 +125,14 @@ bootstrap_source() {
 
 # --- Collect Files --- #
 collect_symlinks() {
-
     echo "Collecting files to symlink from $SOURCE_DIR"
 
     local all_files=()
+
     shopt -s dotglob nullglob
     for f in "$SOURCE_DIR"/* "$SOURCE_DIR"/.*; do
         [[ -e "$f" ]] || continue
         base="$(basename "$f")"
-        $VERBOSE && echo "[V] base = $base"
 
         [[ "$DOTFILES_ONLY" == true && "$base" != .* ]] && continue
 
@@ -141,31 +140,47 @@ collect_symlinks() {
             [[ "$base" == $pattern ]] && continue 2
         done
 
-        all_files+=("$f")
+        # If it's a directory, descend and collect second-level entries
+        if [[ -d "$f" ]]; then
+            for sub in "$f"/*; do
+                subbase="$(basename "$sub")"
+                [[ -e "$sub" ]] || continue
+
+                for pattern in "${IGNORES[@]}"; do
+                    [[ "$subbase" == $pattern ]] && continue 2
+                done
+
+                all_files+=("$sub")
+            done
+        else
+            all_files+=("$f")
+        fi
     done
     shopt -u dotglob nullglob
-    FILES_TO_SYMLINK=("${all_files[@]}")
 
-    # Deduplicate files
+    # Deduplicate and sort
     declare -A seen
     FILES_TO_SYMLINK=()
     for file in "${all_files[@]}"; do
         base="$(basename "$file")"
-        if [[ -z "${seen[$base]}" ]]; then
-            seen[$base]=1
+        [[ -z "${seen[$base]}" ]] && {
+            seen["$base"]=1
             FILES_TO_SYMLINK+=("$file")
-        fi
+        }
     done
-    # Sort files for consistent output
+
     IFS=$'\n' FILES_TO_SYMLINK=($(sort <<<"${FILES_TO_SYMLINK[*]}"))
     unset IFS
+
     [[ ${#FILES_TO_SYMLINK[@]} -eq 0 ]] && {
         echo "No files found to symlink in $SOURCE_DIR"
         exit 0
     }
 
-    $VERBOSE && echo "[V] Found ${#FILES_TO_SYMLINK[@]} files to symlink"
+    $VERBOSE && echo "[V] Found ${#FILES_TO_SYMLINK[@]} files to symlink:"
+    $VERBOSE && printf "  %s\n" "${FILES_TO_SYMLINK[@]}"
 }
+
 
 # --- Create Symlinks --- #
 create_symlinks() {
