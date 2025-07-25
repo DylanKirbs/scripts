@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Author: Dylan Kirby
+# Email: 25853805@sun.ac.za | dylan.kirby.365@gmail.com
 # set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
