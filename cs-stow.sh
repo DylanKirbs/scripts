@@ -6,6 +6,15 @@
 SCRIPT_NAME="$(basename "$0")"
 VERSION="0.1.3"
 
+#Prefvent multiple script instances and race conditons
+LOCKFILE="/tmp/$SCRIPT_NAME.lock"
+cleanup() { 
+    rm -f "$LOCKFILE"
+    # +++++++ Clean up any temporary files +++++++
+    [[ -n "${TEMP_FILES:-}" ]] && rm -f "${TEMP_FILES[@]}" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
 # --- Configurable Defaults --- #
 AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf") 
@@ -22,6 +31,16 @@ BACKUP=false
 SOURCE_DIR=""
 TARGET_DIR="$HOME"
 IGNORES=()
+# --- Logging System --- #
+log() {
+    local level="$1"; shift
+    case "$level" in
+        ERROR) echo "[ERROR] $*" >&2 ;;
+        WARN)  echo "[WARN] $*" >&2 ;;
+        INFO)  echo "[INFO] $*" ;;
+        DEBUG) $VERBOSE && echo "[DEBUG] $*" ;;
+    esac
+}
 
 # --- Help --- #
 show_help() {
@@ -183,19 +202,47 @@ collect_symlinks() {
     $VERBOSE && printf "  %s\n" "${FILES_TO_SYMLINK[@]}"
 }
 
+# --- Create Symlinks with Parent Dir check --- #
+create_symlink_with_parents() {
+    local source="$1" target="$2"
+    local parent_dir="$(dirname "$target")"
+    
+    # Ensure parent directory exists
+    if [[ ! -d "$parent_dir" ]]; then
+        log INFO "Creating parent directory: $parent_dir"
+        $DRY_RUN || mkdir -p "$parent_dir" || {
+            log ERROR "Failed to create parent directory: $parent_dir"
+            return 1
+        }
+    fi
+    
+    # Check for circular symlinks
+    if is_circular_symlink "$source" "$target"; then
+        log WARN "Skipping circular symlink: $source → $target"
+        return 1
+    fi
+    
+    log INFO "ln -s $source → $target"
+    $DRY_RUN || ln -s "$source" "$target" || {
+        log ERROR "Failed to create symlink: $source → $target"
+        return 1
+    }
+    
+    return 0
+}
 
 # --- Create Symlinks --- #
 create_symlinks() {
-    echo "Creating symlinks in $TARGET_DIR for files in $SOURCE_DIR"
-    local created=0 skipped=0 linked=0
+    log INFO "Creating symlinks in $TARGET_DIR for files in $SOURCE_DIR"
+    local created=0 skipped=0 linked=0 errors=0
 
     for file in "${FILES_TO_SYMLINK[@]}"; do
-        base="$(basename "$file")"
-        link="$TARGET_DIR/$base"
+        local base="$(basename "$file")"
+        local link="$TARGET_DIR/$base"
 
         # Skip if already correctly linked
-        if [[ -L "$link" && "$(realpath "$link")" == "$(realpath "$file")" ]]; then
-            echo "[=] $link already linked"
+        if [[ -L "$link" && "$(realpath "$link" 2>/dev/null)" == "$(realpath "$file" 2>/dev/null)" ]]; then
+            log DEBUG "$link already correctly linked"
             ((linked++))
             continue
         fi
@@ -203,35 +250,77 @@ create_symlinks() {
         # Handle conflict
         if [[ -e "$link" || -L "$link" ]]; then
             if $FORCE; then
-                echo "[!] Removing existing: $link"
-                $DRY_RUN || rm -rf "$link"
+                log WARN "Removing existing: $link"
+                $DRY_RUN || rm -rf "$link" || {
+                    log ERROR "Failed to remove existing file: $link"
+                    ((errors++))
+                    continue
+                }
             elif $BACKUP; then
-                backup="$link.bak"
-                echo "[!] Backing up $link → $backup"
-                $DRY_RUN || mv "$link" "$backup"
+                if ! create_backup "$link"; then
+                    ((errors++))
+                    continue
+                fi
             else
-                echo "[!] Skipping (exists): $link"
+                log WARN "Skipping (exists): $link"
                 ((skipped++))
                 continue
             fi
         fi
 
-        echo "[+] ln -s $file → $link"
-        $DRY_RUN || ln -s "$file" "$link" || {
-            echo "Error creating symlink for $file" >&2
-            continue
-        }
-        ((created++))
+        if create_symlink_with_parents "$file" "$link"; then
+            ((created++))
+        else
+            ((errors++))
+        fi
     done
 
-    echo -e "\nSummary$($DRY_RUN && echo " (dry run)"):"
+    echo
+    log INFO "Summary$($DRY_RUN && echo " (dry run)"):"
     echo "  Linked new:          $created"
     echo "  Already correct:     $linked"
     echo "  Skipped conflicts:   $skipped"
+    [[ $errors -gt 0 ]] && echo "  Errors encountered:  $errors"
+    
+    # Return non-zero exit code if there were errors
+    [[ $errors -eq 0 ]]
+}
+
+# --- Circular Symlink Detection --- #
+is_circular_symlink() {
+    local source="$1" target="$2"
+    local source_real target_parent_real
+    
+    source_real="$(realpath "$source" 2>/dev/null)" || return 1
+    target_parent_real="$(realpath "$(dirname "$target")" 2>/dev/null)" || return 1
+    
+    [[ "$source_real" == "$target_parent_real" ]] && return 0
+    
+    # Check if target would create a loop back to source
+    if [[ -L "$target" ]]; then
+        local target_real
+        target_real="$(realpath "$target" 2>/dev/null)" || return 1
+        [[ "$target_real" == "$source_real" ]] && return 0
+    fi
+    
+    return 1
+}
+
+# --- Race Condition - Multiple Instances --- #
+acquire_lock() {
+    if ! mkdir "$LOCKFILE" 2>/dev/null; then
+        log ERROR "Another instance of $SCRIPT_NAME is already running."
+        log ERROR "If you're sure no other instance is running, remove: $LOCKFILE"
+        exit 1
+    fi
+    log DEBUG "Acquired lock: $LOCKFILE"
 }
 
 # --- Main --- #
 main() {
+    
+    acquire_lock
+
     parse_args "$@"
     bootstrap_source
     collect_symlinks
