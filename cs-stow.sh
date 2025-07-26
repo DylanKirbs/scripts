@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# Author: Dylan Kirby
-# Email: 25853805@sun.ac.za | dylan.kirby.365@gmail.com
+# Authors:
+# Dylan Kirby @DylanKirbs [25853805@sun.ac.za | dylan.kirby.365@gmail.com]
+# Alok More @MineCounter [25876864@sun.ac.za]
 # set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
 VERSION="0.1.3"
 
-#Prefvent multiple script instances and race conditons
+# --- Lockfile Setup --- #
 LOCKFILE="/tmp/$SCRIPT_NAME.lock"
 cleanup() { 
     rm -f "$LOCKFILE"
-    # +++++++ Clean up any temporary files +++++++
     [[ -n "${TEMP_FILES:-}" ]] && rm -f "${TEMP_FILES[@]}" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
@@ -31,13 +31,14 @@ BACKUP=false
 SOURCE_DIR=""
 TARGET_DIR="$HOME"
 IGNORES=()
+
 # --- Logging System --- #
 log() {
     local level="$1"; shift
     case "$level" in
         ERROR) echo "[ERROR] $*" >&2 ;;
-        WARN)  echo "[WARN] $*" >&2 ;;
-        INFO)  echo "[INFO] $*" ;;
+        WARN)  echo "[WARN]  $*" >&2 ;;
+        INFO)  echo "[INFO]  $*" ;;
         DEBUG) $VERBOSE && echo "[DEBUG] $*" ;;
     esac
 }
@@ -98,7 +99,7 @@ parse_args() {
             --target) TARGET_DIR="$(realpath "$2")"; shift ;;
             --target=*) TARGET_DIR="$(realpath "${1#--target=}")" ;;
             -*)
-                echo "Unknown option: $1" >&2
+                log ERROR "Unknown option: $1" >&2
                 show_help; exit 1 ;;
             *)
                 pos_args+=("$1") ;;
@@ -107,13 +108,13 @@ parse_args() {
     done
 
     if [[ ${#pos_args[@]} -ne 1 ]]; then
-        echo "Error: Expected exactly one positional argument for source directory." >&2
+        log ERROR "Expected exactly one positional argument for source directory." >&2
         show_help; exit 1
     fi
     SOURCE_DIR="$(realpath "${pos_args[0]}")"
 
-    [[ -z "$SOURCE_DIR" ]] && { echo "Missing source directory"; show_help; exit 1; }
-    [[ ! -d "$TARGET_DIR" ]] && { echo "Target directory does not exist: $TARGET_DIR"; exit 1; }
+    [[ -z "$SOURCE_DIR" ]] && { log ERROR "Missing source directory"; show_help; exit 1; }
+    [[ ! -d "$TARGET_DIR" ]] && { log ERROR "Target directory does not exist: $TARGET_DIR"; exit 1; }
 
     IGNORES+=("${DEFAULT_IGNORES[@]}")
     for f in "${IGNORE_FILES[@]}"; do
@@ -121,31 +122,31 @@ parse_args() {
         [[ -r "$TARGET_DIR/$f" ]] && mapfile -t lines < "$TARGET_DIR/$f" && IGNORES+=("${lines[@]}")
     done
 
-    $VERBOSE && echo "[V] Ignoring: ${IGNORES[*]}"
+    log DEBUG "Ignoring: ${IGNORES[*]}"
 }
 
 # --- Bootstrap Source --- #
 bootstrap_source() {
-    echo "Bootstrapping source directory: $SOURCE_DIR"
+    log INFO "Bootstrapping source directory: $SOURCE_DIR"
 
-    $VERBOSE && echo "[V] Bootstrap Directories: ${AUTO_CREATE_DIRS[*]}"
-    $VERBOSE && echo "[V] Bootstrap Files: ${AUTO_CREATE_FILES[*]}"
+    log DEBUG "Bootstrap Directories: ${AUTO_CREATE_DIRS[*]}"
+    log DEBUG "Bootstrap Files: ${AUTO_CREATE_FILES[*]}"
 
     for d in "${AUTO_CREATE_DIRS[@]}"; do
         [[ -d "$SOURCE_DIR/$d" ]] && continue
-        echo "[+] mkdir -p $SOURCE_DIR/$d"
+        log INFO "[+] mkdir -p $SOURCE_DIR/$d"
         $DRY_RUN || mkdir -p "$SOURCE_DIR/$d"
     done
     for f in "${AUTO_CREATE_FILES[@]}"; do
         [[ -e "$SOURCE_DIR/$f" ]] && continue
-        echo "[+] touch $SOURCE_DIR/$f"
+        log INFO "[+] touch $SOURCE_DIR/$f"
         $DRY_RUN || touch "$SOURCE_DIR/$f"
     done
 }
 
 # --- Collect Files --- #
 collect_symlinks() {
-    echo "Collecting files to symlink from $SOURCE_DIR"
+    log INFO "Collecting files to symlink from $SOURCE_DIR"
 
     local all_files=()
 
@@ -194,11 +195,11 @@ collect_symlinks() {
     unset IFS
 
     [[ ${#FILES_TO_SYMLINK[@]} -eq 0 ]] && {
-        echo "No files found to symlink in $SOURCE_DIR"
+        log WARN "No files found to symlink in $SOURCE_DIR"
         exit 0
     }
 
-    $VERBOSE && echo "[V] Found ${#FILES_TO_SYMLINK[@]} files to symlink:"
+    log DEBUG "Found ${#FILES_TO_SYMLINK[@]} files to symlink:"
     $VERBOSE && printf "  %s\n" "${FILES_TO_SYMLINK[@]}"
 }
 
