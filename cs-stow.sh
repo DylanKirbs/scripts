@@ -5,7 +5,7 @@
 # set -euo pipefail
 
 SCRIPT_NAME="$(basename "$0")"
-VERSION="0.1.3"
+VERSION="0.2.0"
 
 # --- Lockfile Setup --- #
 LOCKFILE="/tmp/$SCRIPT_NAME.lock"
@@ -16,11 +16,13 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- Configurable Defaults --- #
-AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla")
+AUTO_CREATE_DIRS=(".config" ".local" ".vim" ".tmux" ".mozilla", ".config/nvim")
 AUTO_CREATE_FILES=(".bashrc" ".vimrc" ".gitconfig" ".tmux.conf") 
-DEFAULT_IGNORES=(".git" ".Xauthority" ".config/gnome*" ".config/GNOME*" ".config/user*" ".config/ubuntu*" ".config/xdg*" ".config/gtk*" ".config/dconf" ".cache" ".dbus" ".pam_environment" ".bash_profile" ".bash_login" ".xinitrc" ".xsession*" ".Xsession*" ".profile" ".bash_profile" ".local/share/Trash" ".Trash*" "*.swp" "*.swo" ".*.swp" ".*.swo")
+DEFAULT_IGNORES=("*.swo" "*.swp" ".*.swo" ".*.swp" ".bash_login" ".bash_profile" ".cache" ".config/dconf" ".config/GNOME*" ".config/gtk*" ".config/ubuntu*" ".config/user*" ".config/xdg*" ".dbus" ".git" ".local/share/Trash" ".pam_environment" ".profile" ".Trash*" ".X*" ".x*")
 IGNORE_FILES=(".$SCRIPT_NAME-ignore")
 SECOND_LEVEL_DIRS=(".config")
+
+declare -a FILES_TO_SYMLINK
 
 # --- Runtime Flags --- #
 DRY_RUN=false
@@ -28,6 +30,8 @@ VERBOSE=false
 DOTFILES_ONLY=true
 FORCE=false
 BACKUP=false
+UNSTOW=false
+MIGRATE=false
 SOURCE_DIR=""
 TARGET_DIR="$HOME"
 IGNORES=()
@@ -56,8 +60,10 @@ Options:
   --ignore <pattern>       Glob pattern to ignore (repeatable)
   --allow-non-dotfiles     Include non-dotfiles in symlinks
   --target <dir>           Target directory for links (default: \$HOME)
+  --migrate                Migrate existing files to source before linking
   --force                  Overwrite conflicts in target
   --backup                 Backup conflicts instead of overwriting
+  --unstow                 Remove symlinks instead of creating them
 
 Positional Arguments:
   <source>                 Source directory containing files to stow
@@ -65,9 +71,12 @@ Positional Arguments:
 Example:
   $SCRIPT_NAME --ignore .git* ~/nfs-home
   # This will create symlinks in \$HOME for all dotfiles in ~/nfs-home, ignoring .git* files/directories.
+  
+  $SCRIPT_NAME --unstow ~/nfs-home
+  # This will remove symlinks from \$HOME that point to files in ~/nfs-home.
 
 Description:
-This utility creates symbolic links in the target (defaults to \$HOME) directory for all dotfiles (e.g., .vimrc) and configuration directories (e.g., .config) found in the specified source directory. It also supports ignore patterns, either specified via the command line or defined in ignore files (e.g., .$0-ignore) located in the source or target directories. Additionally, certain directories are automatically created in the source directory before the script runs, such as .config, .vscode, and .local/share, this caters for the use case of nsf-mounting.
+This utility creates symbolic links in the target (defaults to \$HOME) directory for all dotfiles (e.g., .vimrc) and configuration directories (e.g., .config) found in the specified source directory. It also supports ignore patterns, either specified via the command line or defined in ignore files (e.g., .$0-ignore) located in the source or target directories. Additionally, certain directories are automatically created in the source directory before the script runs, such as .config, this caters for the use case of nsf-mounting.
 EOF
 }
 
@@ -98,6 +107,8 @@ parse_args() {
             --ignore=*) IGNORES+=("${1#--ignore=}") ;;
             --target) TARGET_DIR="$(realpath "$2")"; shift ;;
             --target=*) TARGET_DIR="$(realpath "${1#--target=}")" ;;
+            --migrate) MIGRATE=true ;;
+            --unstow) UNSTOW=true ;;
             -*)
                 log ERROR "Unknown option: $1" >&2
                 show_help; exit 1 ;;
@@ -115,6 +126,12 @@ parse_args() {
 
     [[ -z "$SOURCE_DIR" ]] && { log ERROR "Missing source directory"; show_help; exit 1; }
     [[ ! -d "$TARGET_DIR" ]] && { log ERROR "Target directory does not exist: $TARGET_DIR"; exit 1; }
+
+    # Validate conflicting options
+    if $UNSTOW && ($BACKUP || $FORCE); then
+        log ERROR "--unstow cannot be used with --backup or --force"
+        exit 1
+    fi
 
     IGNORES+=("${DEFAULT_IGNORES[@]}")
     for f in "${IGNORE_FILES[@]}"; do
@@ -172,7 +189,8 @@ collect_symlinks() {
                   [[ "$subbase" == $pattern || "$rel_path" == $pattern ]] && continue 2
                 done
 
-                all_files+=("$sub")
+                # Store with special marker for second-level directory handling
+                all_files+=("$sub:SECOND_LEVEL:$base/$subbase")
             done
         else
             all_files+=("$f")
@@ -184,7 +202,12 @@ collect_symlinks() {
     declare -A seen
     FILES_TO_SYMLINK=()
     for file in "${all_files[@]}"; do
-        rel_path="${file#$SOURCE_DIR/}"
+        # Handle second-level entries differently for deduplication
+        if [[ "$file" == *:SECOND_LEVEL:* ]]; then
+            rel_path="${file##*:SECOND_LEVEL:}"
+        else
+            rel_path="${file#$SOURCE_DIR/}"
+        fi
         [[ -z "${seen[$rel_path]}" ]] && {
             seen["$rel_path"]=1
             FILES_TO_SYMLINK+=("$file")
@@ -237,15 +260,36 @@ create_symlinks() {
     log INFO "Creating symlinks in $TARGET_DIR for files in $SOURCE_DIR"
     local created=0 skipped=0 linked=0 errors=0
 
-    for file in "${FILES_TO_SYMLINK[@]}"; do
-        local base="$(basename "$file")"
-        local link="$TARGET_DIR/$base"
+    for file_entry in "${FILES_TO_SYMLINK[@]}"; do
+        local file link
+        
+        # Handle second-level directory entries
+        if [[ "$file_entry" == *:SECOND_LEVEL:* ]]; then
+            file="${file_entry%%:SECOND_LEVEL:*}"
+            local target_path="${file_entry##*:SECOND_LEVEL:}"
+            link="$TARGET_DIR/$target_path"
+        else
+            file="$file_entry"
+            local base="$(basename "$file")"
+            link="$TARGET_DIR/$base"
+        fi
+
+        # Validate realpath commands
+        local file_real link_real
+        file_real="$(realpath "$file" 2>/dev/null)" || {
+            log ERROR "Cannot resolve source path: $file"
+            ((errors++))
+            continue
+        }
 
         # Skip if already correctly linked
-        if [[ -L "$link" && "$(realpath "$link" 2>/dev/null)" == "$(realpath "$file" 2>/dev/null)" ]]; then
-            log DEBUG "$link already correctly linked"
-            ((linked++))
-            continue
+        if [[ -L "$link" ]]; then
+            link_real="$(realpath "$link" 2>/dev/null)"
+            if [[ "$link_real" == "$file_real" ]]; then
+                log DEBUG "$link already correctly linked"
+                ((linked++))
+                continue
+            fi
         fi
 
         # Handle conflict
@@ -307,14 +351,203 @@ is_circular_symlink() {
     return 1
 }
 
+# --- Migrate Files --- #
+migrate_files() {
+    log INFO "Migrating files from $TARGET_DIR to $SOURCE_DIR"
+
+    RSYNC_FLAGS=(
+    -rt
+    --remove-source-files
+    --prune-empty-dirs
+    --chmod=ugo=rwX
+    --ignore-existing
+    --include='*/'
+    )
+
+    [[ "$DOTFILES_ONLY" == true ]] && RSYNC_FLAGS+=(--include='.*' --exclude='*')
+    [[ "$DOTFILES_ONLY" != true ]] && RSYNC_FLAGS+=(--include='*')
+
+    for pattern in "${IGNORES[@]}"; do
+        RSYNC_FLAGS+=(--exclude="$pattern")
+    done
+
+    $DRY_RUN && RSYNC_FLAGS+=(--dry-run)
+    $VERBOSE && RSYNC_FLAGS+=(--verbose)
+    $VERBOSE && echo "[V] Rsync flags: ${RSYNC_FLAGS[*]}"
+
+    rsync "${RSYNC_FLAGS[@]}" "$TARGET_DIR"/ "$SOURCE_DIR"/ || {
+        log ERROR "Failed to migrate files from $TARGET_DIR to $SOURCE_DIR"
+        exit 1
+    }
+    log INFO "Migration complete: $TARGET_DIR → $SOURCE_DIR"
+
+}
+
+# --- Backup Function --- #
+create_backup() {
+    local file="$1"
+    local backup="${file}.bak.$(date +%Y%m%d_%H%M%S)"
+    
+    log INFO "Backing up: $file → $backup"
+    if $DRY_RUN; then
+        return 0
+    fi
+    
+    if mv "$file" "$backup"; then
+        log INFO "Backup created: $backup"
+        return 0
+    else
+        log ERROR "Failed to create backup: $backup"
+        return 1
+    fi
+}
+
+# --- Restore Backup Function --- #
+find_and_restore_backup() {
+    local file="$1"
+    
+    # Find the most recent backup file
+    local latest_backup=""
+    local latest_timestamp=""
+    
+    shopt -s nullglob
+    local backups=("${file}".bak.*)
+    shopt -u nullglob
+    for backup in "${backups[@]}"; do
+        [[ -e "$backup" ]] || continue
+        
+        # Extract timestamp from backup filename (format: .bak.YYYYMMDD_HHMMSS)
+        local timestamp="${backup##*.bak.}"
+        
+        # Validate timestamp format
+        if [[ "$timestamp" =~ ^[0-9]{8}_[0-9]{6}$ ]]; then
+            if [[ -z "$latest_timestamp" || "$timestamp" > "$latest_timestamp" ]]; then
+                latest_backup="$backup"
+                latest_timestamp="$timestamp"
+            fi
+        fi
+    done
+    
+    if [[ -n "$latest_backup" ]]; then
+        log INFO "Restoring backup: $latest_backup → $file"
+        if $DRY_RUN; then
+            return 0
+        fi
+        
+        if mv "$latest_backup" "$file"; then
+            log INFO "Backup restored: $file"
+            return 0
+        else
+            log ERROR "Failed to restore backup: $latest_backup → $file"
+            return 1
+        fi
+    fi
+    
+    return 1  # No backup found
+}
+
 # --- Race Condition - Multiple Instances --- #
 acquire_lock() {
-    if ! mkdir "$LOCKFILE" 2>/dev/null; then
+    if ! touch "$LOCKFILE" 2>/dev/null; then
         log ERROR "Another instance of $SCRIPT_NAME is already running."
         log ERROR "If you're sure no other instance is running, remove: $LOCKFILE"
         exit 1
     fi
     log DEBUG "Acquired lock: $LOCKFILE"
+}
+
+# --- Remove Symlinks (Unstow) --- #
+remove_symlinks() {
+    log INFO "Removing symlinks from $TARGET_DIR that point to files in $SOURCE_DIR"
+    local removed=0 skipped=0 not_found=0 restored=0 errors=0
+
+    for file_entry in "${FILES_TO_SYMLINK[@]}"; do
+        local file link
+        
+        # Handle second-level directory entries
+        if [[ "$file_entry" == *:SECOND_LEVEL:* ]]; then
+            file="${file_entry%%:SECOND_LEVEL:*}"
+            local target_path="${file_entry##*:SECOND_LEVEL:}"
+            link="$TARGET_DIR/$target_path"
+        else
+            file="$file_entry"
+            local base="$(basename "$file")"
+            link="$TARGET_DIR/$base"
+        fi
+
+        # Validate source file exists
+        local file_real
+        file_real="$(realpath "$file" 2>/dev/null)" || {
+            log ERROR "Cannot resolve source path: $file"
+            ((errors++))
+            continue
+        }
+
+        # Check if symlink exists
+        if [[ ! -L "$link" ]]; then
+            if [[ -e "$link" ]]; then
+                log DEBUG "Skipping (not a symlink): $link"
+                ((skipped++))
+            else
+                log DEBUG "Not found: $link"
+                ((not_found++))
+            fi
+            continue
+        fi
+
+        # Check if symlink points to our source file
+        local link_real
+        link_real="$(realpath "$link" 2>/dev/null)"
+        if [[ "$link_real" == "$file_real" ]]; then
+            log INFO "Removing symlink: $link"
+            if $DRY_RUN; then
+                ((removed++))
+                # Check if backup would be restored in dry run
+                local backup_pattern="${link}.bak.*"
+                for backup in ${backup_pattern}; do
+                    if [[ -e "$backup" ]]; then
+                        log INFO "Would restore backup: $backup → $link"
+                        break
+                    fi
+                done
+            else
+                if rm "$link"; then
+                    ((removed++))
+                    
+                    # Try to restore backup file
+                    if find_and_restore_backup "$link"; then
+                        ((restored++))
+                    fi
+                    
+                    # Remove empty parent directories (only for second-level dirs)
+                    if [[ "$file_entry" == *:SECOND_LEVEL:* ]]; then
+                        local parent_dir="$(dirname "$link")"
+                        if [[ -d "$parent_dir" ]] && [[ -z "$(ls -A "$parent_dir" 2>/dev/null)" ]]; then
+                            log INFO "Removing empty directory: $parent_dir"
+                            rmdir "$parent_dir" 2>/dev/null || true
+                        fi
+                    fi
+                else
+                    log ERROR "Failed to remove symlink: $link"
+                    ((errors++))
+                fi
+            fi
+        else
+            log DEBUG "Skipping (points elsewhere): $link → $link_real"
+            ((skipped++))
+        fi
+    done
+
+    echo
+    log INFO "Unstow summary$($DRY_RUN && echo " (dry run)"):"
+    echo "  Removed symlinks:    $removed"
+    echo "  Restored backups:    $restored"
+    echo "  Skipped (not ours):  $skipped"
+    echo "  Not found:           $not_found"
+    [[ $errors -gt 0 ]] && echo "  Errors encountered:  $errors"
+    
+    # Return non-zero exit code if there were errors
+    [[ $errors -eq 0 ]]
 }
 
 # --- Main --- #
@@ -323,9 +556,17 @@ main() {
     acquire_lock
 
     parse_args "$@"
+
+    $MIGRATE && migrate_files
+
     bootstrap_source
     collect_symlinks
-    create_symlinks
+
+    if $UNSTOW; then
+        remove_symlinks
+    else
+        create_symlinks
+    fi
 }
 
 main "$@"
