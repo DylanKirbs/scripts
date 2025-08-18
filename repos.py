@@ -188,8 +188,17 @@ class ProjectRepos:
                 )
 
         logging.info(
-            f"Successfully switched branches for {len(successes)}/{len(self.repos)}/{len(self.su_numbers)} switched/repos/students."
+            f"Successfully switched branches for {len(successes)}/{len(self.repos)}/{len(self.su_numbers)} switched/total repos/students."
         )
+        self._export(successes, "switched_repos.csv")
+
+    def _export(self, repos, out_file):
+        """
+        Export the specified repositories to a file.
+        """
+        with open(out_file, "w") as f:
+            for repo in tqdm(repos):
+                f.write(f"{repo_2_su(repo)},{repo.head.commit.hexsha}\n")
 
     def export_commits(self, out_file: str):
         """
@@ -198,10 +207,7 @@ class ProjectRepos:
         :param out_file: The output file to write the commit hashes to.
         """
 
-        with open(out_file, "w") as f:
-            f.write(f"su,commit\n")
-            for repo in tqdm(self.repos):
-                f.write(f"{repo_2_su(repo)},{repo.head.commit.hexsha}\n")
+        self._export(self.repos, out_file)
 
     def checkout_commits(self, in_file: str):
         """
