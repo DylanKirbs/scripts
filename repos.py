@@ -13,18 +13,55 @@ Host gitolite.cs.sun.ac.za
 Ensure the directory `~/.ssh/controlmasters/` exists.
 """
 
-from os import login_tty
-from pathlib import Path
-import sys
 from argparse import ArgumentParser, REMAINDER
 from git import Repo
+from pathlib import Path
+from termcolor import colored
 from tqdm import tqdm
 from tqdm.contrib.logging import logging_redirect_tqdm
 import logging
+import sys
 
 USER = "rw244-2025"
 TEMPLATE_REPO_URL = "{user}@gitolite.cs.sun.ac.za:{su_number}/{project_name}"
 CLONE_DIR = Path("repos").resolve()
+
+
+class ColouredFormatter(logging.Formatter):
+    """
+    A logging formatter that highlights specified text.
+
+    :author: D. Kirby
+    """
+
+    def __init__(self, *args, highlights: dict = {}, **kwargs):
+        """
+        Initialize the formatter.
+
+        Example usage:
+        >>> formatter = ColouredFormatter('%(levelname)-8s| %(message)s', highlights={'INFO': 'green'})
+
+        :param highlights: The dictionary of words and colours to highlight them, defaults to {}
+        :type highlights: dict, optional
+
+        The args and kwargs are passed to the superclass. See [`logging.Formatter`](https://docs.python.org/3/library/logging.html#logging.Formatter) for more information.
+        """
+        super().__init__(*args, **kwargs)
+
+        # Precompute the replacements
+        self.replacer = {}
+        for text, color in highlights.items():
+            self.replacer[text] = colored(text, color)
+
+    def format(self, record: logging.LogRecord) -> str:
+        out = super().format(record)
+        for text, highlight in self.replacer.items():
+            out = out.replace(text, highlight)
+        return out
+
+
+def repo_2_su(repo: Repo) -> str:
+    return Path(str(repo.working_tree_dir)).name
 
 
 class ProjectRepos:
@@ -47,6 +84,8 @@ class ProjectRepos:
             "clone": self.clone,
             "pull": self.pull,
             "switch": self.switch,
+            "export-commits": self.export_commits,
+            "checkout-commits": self.checkout_commits,
         }
 
     def run(self, name):
@@ -72,13 +111,10 @@ class ProjectRepos:
                 f"Located {len(self.repos)}/{len(self.su_numbers)} repositories in {self.repo_dir.resolve()}"
             )
 
-        return self.repos
-
     def clone(self):
         """
         Clone the repositories for the specified student numbers and project name.
-
-        Only non-existing repositories will be cloned. A set containing all of the repos is returned.
+        Only non-existing repositories will be cloned.
         """
 
         if len(self.repos) > 0:
@@ -86,9 +122,7 @@ class ProjectRepos:
                 "Only non-existing repositories will be cloned. If you wish to update the existing repositories, use 'pull' instead"
             )
 
-        su_numbers = self.su_numbers - set(
-            Path(str(repo.working_tree_dir)).name for repo in self.repos
-        )
+        su_numbers = self.su_numbers - set(repo_2_su(repo) for repo in self.repos)
 
         for su_number in tqdm(su_numbers):
             if self.dry_run:
@@ -111,8 +145,6 @@ class ProjectRepos:
                     file=sys.stderr,
                 )
 
-        return self.repos
-
     def pull(self):
         """
         Pull the latest changes for the specified student numbers and project name.
@@ -127,25 +159,23 @@ class ProjectRepos:
 
         for repo in tqdm(self.repos):
             if self.dry_run:
-                logging.info(f"Dry run: {repo.working_tree_dir}")
+                logging.info(f"Dry run [pull]: {repo_2_su(repo)}")
                 continue
 
             try:
                 repo.git.pull()
             except Exception as e:
                 tqdm.write(
-                    f"An error occurred while pulling the repository for {repo.working_tree_dir.name}: {e}",
+                    f"An error occurred while pulling the repository for {repo_2_su(repo)}: {e}",
                     file=sys.stderr,
                 )
-
-        return self.repos
 
     def switch(self, branch_like: str):
 
         successes = set()
-        for repo in self.repos:
+        for repo in tqdm(self.repos):
             if self.dry_run:
-                logging.info(f"Dry run [switch]: {repo.working_tree_dir}")
+                logging.info(f"Dry run [switch]: {repo_2_su(repo)}")
                 continue
 
             try:
@@ -153,14 +183,58 @@ class ProjectRepos:
                 successes.add(repo)
             except Exception as e:
                 tqdm.write(
-                    f"An error occurred while switching branches for {repo.working_tree_dir}: {e}",
+                    f"An error occurred while switching branches for {repo_2_su(repo)}: {e}",
                     file=sys.stderr,
                 )
 
         logging.info(
             f"Successfully switched branches for {len(successes)}/{len(self.repos)}/{len(self.su_numbers)} switched/repos/students."
         )
-        return successes
+
+    def export_commits(self, out_file: str):
+        """
+        Export the current commit hash for each repository to a csv file.
+
+        :param out_file: The output file to write the commit hashes to.
+        """
+
+        with open(out_file, "w") as f:
+            f.write(f"su,commit\n")
+            for repo in tqdm(self.repos):
+                f.write(f"{repo_2_su(repo)},{repo.head.commit.hexsha}\n")
+
+    def checkout_commits(self, in_file: str):
+        """
+        Checkout the commits specified in the input file.
+
+        :param in_file: The input file containing student numbers and commit hashes.
+        """
+
+        checked = set()
+        with open(in_file, "r") as f:
+            f.readline()  # Skip header line
+            for line in tqdm(f.readlines()):
+                su_number, commit_hash = line.strip().split(",")
+                repo = self.repo_dir / su_number
+                if not repo.exists():
+                    logging.warning(f"Repository for {su_number} does not exist.")
+                    continue
+
+                try:
+                    r = Repo(repo)
+                    r.git.checkout(commit_hash)
+                    checked.add(su_number)
+                except Exception as e:
+                    tqdm.write(
+                        f"An error occurred while checking out {commit_hash} for {su_number}: {e}",
+                        file=sys.stderr,
+                    )
+
+        missing_students = su_numbers - checked
+        extra_students = checked - su_numbers
+        logging.info(
+            f"Missing students: {missing_students}, Extra students: {extra_students}"
+        )
 
 
 if __name__ == "__main__":
@@ -207,7 +281,24 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    logging.basicConfig(level=args.log_level)
+    # Logging
+
+    logging.basicConfig(level=logging.INFO)
+    formatter = ColouredFormatter(
+        "%(levelname)-8s| %(message)s",
+        highlights={
+            # Log levels
+            "DEBUG": "cyan",
+            "INFO": "green",
+            "WARNING": "yellow",
+            "ERROR": "red",
+            "EXCEPTION": "red",
+            "CRITICAL": "red",
+        },
+    )
+    logging.getLogger().handlers[0].setFormatter(formatter)
+
+    # Main execution
 
     su_numbers = set()
     with open(args.student_numbers_file, "r") as f:
@@ -218,4 +309,3 @@ if __name__ == "__main__":
         projects.run(args.subcommand)(*args.subcommand_args)
 
     sys.exit(0)
-
