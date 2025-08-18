@@ -14,6 +14,7 @@ Ensure the directory `~/.ssh/controlmasters/` exists.
 """
 
 from argparse import ArgumentParser, REMAINDER
+import shutil
 from git import Repo
 from pathlib import Path
 from termcolor import colored
@@ -209,11 +210,12 @@ class ProjectRepos:
 
         self._export(self.repos, out_file)
 
-    def checkout_commits(self, in_file: str):
+    def checkout_commits(self, in_file: str, delete_missing=False):
         """
         Checkout the commits specified in the input file.
 
         :param in_file: The input file containing student numbers and commit hashes.
+        :param delete_missing: If True, will delete repositories for missing students.
         """
 
         checked = set()
@@ -241,6 +243,13 @@ class ProjectRepos:
         logging.info(
             f"Missing students: {missing_students}, Extra students: {extra_students}"
         )
+
+        if delete_missing:
+            for su_number in missing_students:
+                repo = self.repo_dir / su_number
+                if repo.exists():
+                    shutil.rmtree(repo)
+                    logging.info(f"Deleted missing repository for {su_number}.")
 
 
 if __name__ == "__main__":
