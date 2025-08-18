@@ -82,6 +82,7 @@ class ProjectRepos:
 
         # Subcommands
         self._subcommands = {
+            "missing": self.missing,
             "clone": self.clone,
             "pull": self.pull,
             "switch": self.switch,
@@ -110,6 +111,19 @@ class ProjectRepos:
         else:
             logging.info(
                 f"Located {len(self.repos)}/{len(self.su_numbers)} repositories in {self.repo_dir.resolve()}"
+            )
+
+    def missing(self):
+        """
+        List all missing repositories for the specified student numbers and project name.
+        """
+
+        missing_repos = self.su_numbers - set(repo_2_su(repo) for repo in self.repos)
+        if not missing_repos:
+            logging.info("No missing repositories found.")
+        else:
+            logging.info(
+                f"Missing repositories for {self.project_name}: {missing_repos}"
             )
 
     def clone(self):
@@ -197,6 +211,7 @@ class ProjectRepos:
         """
         Export the specified repositories to a file.
         """
+        logging.info(f"Exporting {len(repos)} repositories to {out_file}")
         with open(out_file, "w") as f:
             for repo in tqdm(repos):
                 f.write(f"{repo_2_su(repo)},{repo.head.commit.hexsha}\n")
@@ -220,7 +235,6 @@ class ProjectRepos:
 
         checked = set()
         with open(in_file, "r") as f:
-            f.readline()  # Skip header line
             for line in tqdm(f.readlines()):
                 su_number, commit_hash = line.strip().split(",")
                 repo = self.repo_dir / su_number
@@ -245,6 +259,9 @@ class ProjectRepos:
         )
 
         if delete_missing:
+            logging.info(
+                f"Deleting missing repositories for students: {missing_students}"
+            )
             for su_number in missing_students:
                 repo = self.repo_dir / su_number
                 if repo.exists():
