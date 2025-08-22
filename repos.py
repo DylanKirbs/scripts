@@ -294,12 +294,14 @@ class ProjectRepos:
                         r.git.reset("--hard", commit_hash)
                     else: # invalid hash, use fallback
                         if fallback_epoch == "-1":
-                            r.git.reset("--hard", r.head.commit.parents[-1])
-                            tqdm.write(f"Reset to initial commit for {su_number}")
+                            commit = r.head.commit.parents[-1]
+                            r.git.reset("--hard", commit)
+                            tqdm.write(f"Reset to initial commit {commit} for {su_number}")
                         elif fallback_epoch:
                             # get the most recent commit from before the fallback date
-                            tqdm.write(f"Reset to fallback commit for {su_number}")
-                            r.git.reset("--hard", r.git.rev_list("--before", fallback_epoch, "--max-count=1", "HEAD"))
+                            commit = r.git.rev_list("--before", fallback_epoch, "--max-count=1", "HEAD")
+                            r.git.reset("--hard", commit)
+                            tqdm.write(f"Reset to fallback commit {commit} for {su_number}")
 
                     # clean
                     r.git.clean("-df")
