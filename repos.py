@@ -77,8 +77,8 @@ class ProjectRepos:
 
         # Setup
         self.repos: set[Repo] = set()
-        self.locate()
         self.repo_dir.mkdir(parents=True, exist_ok=True)
+        self.locate()
 
         # Subcommands
         self._subcommands = {
