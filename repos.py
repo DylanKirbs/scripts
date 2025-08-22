@@ -88,6 +88,7 @@ class ProjectRepos:
             "switch": self.switch,
             "export-commits": self.export_commits,
             "checkout-commits": self.checkout_commits,
+            "hard-reset-commits": self.hard_reset_commits,
         }
 
     def run(self, name):
@@ -268,6 +269,51 @@ class ProjectRepos:
                     shutil.rmtree(repo)
                     logging.info(f"Deleted missing repository for {su_number}.")
 
+
+    def hard_reset_commits(self, in_file: str, fallback_epoch: str = ""):
+        """
+        Hard reset the commits specified in the input file.
+
+        :param in_file: The input file containing student numbers and commit hashes.
+        :param fallback_epoch: The fallback epoch timestamp to reset to if the commit hash is not found (the most recent commit BEFORE the timestamp will be the target). If empty, no fallback will be used (i.e. the repository will remain on HEAD). If "-1" the repository will be reset to the first commit.
+        """
+
+        checked = set()
+        with open(in_file, "r") as f:
+            for line in tqdm(f.readlines()):
+                su_number, commit_hash = line.strip().split(",")
+                repo = self.repo_dir / su_number
+                if not repo.exists():
+                    logging.warning(f"Repository for {su_number} does not exist.")
+                    continue
+
+                try:
+                    r = Repo(repo)
+                    
+                    if commit_hash in r.git.rev_list("--all"):
+                        r.git.reset("--hard", commit_hash)
+                    else: # invalid hash, use fallback
+                        if fallback_epoch == "-1":
+                            r.git.reset("--hard", r.head.commit.parents[-1])
+                        elif fallback_epoch:
+                            # get the most recent commit from before the fallback date
+                            r.git.reset("--hard", r.git.rev_list("--before", fallback_epoch, "--max-count=1", "HEAD"))
+
+                    # clean
+                    r.git.clean("-df")
+
+                    checked.add(su_number)
+                except Exception as e:
+                    tqdm.write(
+                        f"An error occurred while resetting {commit_hash} for {su_number}: {e}",
+                        file=sys.stderr,
+                    )
+
+        missing_students = su_numbers - checked
+        extra_students = checked - su_numbers
+        logging.info(
+            f"Missing students: {missing_students}, Extra students: {extra_students}"
+        )
 
 if __name__ == "__main__":
 
